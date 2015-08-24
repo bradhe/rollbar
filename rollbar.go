@@ -41,9 +41,6 @@ var (
 	// Platform, default to OS, but could be change ('client' for instance)
 	Platform = runtime.GOOS
 
-	// API endpoint for Rollbar.
-	Endpoint = "https://api.rollbar.com/api/1/item/"
-
 	// Maximum number of errors allowed in the sending queue before we start
 	// dropping new errors on the floor.
 	Buffer = 1000
@@ -59,9 +56,17 @@ var (
 	CodeVersion = ""
 
 	// Queue of messages to be sent.
-	bodyChannel chan map[string]interface{}
+	bodyChannel chan Request
 	waitGroup   sync.WaitGroup
 )
+
+type Request struct {
+	// The endpoint to publish data to.
+	Endpoint string
+
+	// Data to serialize and deliver to the API via POST
+	Body map[string]interface{}
+}
 
 // Fields can be used to pass arbitrary data to the Rollbar API.
 type Field struct {
@@ -72,11 +77,11 @@ type Field struct {
 // -- Setup
 
 func init() {
-	bodyChannel = make(chan map[string]interface{}, Buffer)
+	bodyChannel = make(chan Request, Buffer)
 
 	go func() {
-		for body := range bodyChannel {
-			post(body)
+		for req := range bodyChannel {
+			post(req)
 			waitGroup.Done()
 		}
 	}()
@@ -128,7 +133,7 @@ func RequestErrorWithStack(level string, r *http.Request, err error, stack Stack
 	buildAndPushError(level, err, stack, append(fields, &Field{Name: "request", Data: errorRequest(r)})...)
 }
 
-func buildError(level string, err error, stack Stack, fields ...*Field) map[string]interface{} {
+func buildError(level string, err error, stack Stack, fields ...*Field) Request {
 	body := buildBody(level, err.Error())
 	data := body["data"].(map[string]interface{})
 	errBody, fingerprint := errorBody(err, stack)
@@ -139,7 +144,10 @@ func buildError(level string, err error, stack Stack, fields ...*Field) map[stri
 		data[field.Name] = field.Data
 	}
 
-	return body
+	return Request{
+		Endpoint: "https://api.rollbar.com/api/1/item/",
+		Body:     body,
+	}
 }
 
 func buildAndPushError(level string, err error, stack Stack, fields ...*Field) {
@@ -155,7 +163,12 @@ func Message(level string, msg string) {
 	data := body["data"].(map[string]interface{})
 	data["body"] = messageBody(msg)
 
-	push(body)
+	req := Request{
+		Endpoint: "https://api.rollbar.com/api/1/item/",
+		Body:     body,
+	}
+
+	push(req)
 }
 
 // -- Misc.
@@ -283,29 +296,25 @@ func errorClass(err error) string {
 // -- POST handling
 
 // Queue the given JSON body to be POSTed to Rollbar.
-func push(body map[string]interface{}) {
-	if len(bodyChannel) < Buffer {
-		waitGroup.Add(1)
-		bodyChannel <- body
-	} else {
-		stderr("buffer full, dropping error on the floor")
-	}
+func push(req Request) {
+	waitGroup.Add(1)
+	bodyChannel <- req
 }
 
 // POST the given JSON body to Rollbar synchronously.
-func post(body map[string]interface{}) {
+func post(req Request) {
 	if len(Token) == 0 {
 		stderr("empty token")
 		return
 	}
 
-	jsonBody, err := json.Marshal(body)
+	jsonBody, err := json.Marshal(req.Body)
 	if err != nil {
 		stderr("failed to encode payload: %s", err.Error())
 		return
 	}
 
-	resp, err := http.Post(Endpoint, "application/json", bytes.NewReader(jsonBody))
+	resp, err := http.Post(req.Endpoint, "application/json", bytes.NewReader(jsonBody))
 	if err != nil {
 		stderr("POST failed: %s", err.Error())
 	} else if resp.StatusCode != 200 {

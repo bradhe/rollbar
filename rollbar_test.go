@@ -127,12 +127,14 @@ func TestFlattenValues(t *testing.T) {
 }
 
 func TestCustomField(t *testing.T) {
-	body := buildError(ERR, errors.New("test-custom"), BuildStack(0), &Field{
+	req := buildError(ERR, errors.New("test-custom"), BuildStack(0), &Field{
 		Name: "custom",
 		Data: map[string]string{
 			"NAME1": "VALUE1",
 		},
 	})
+
+	body := req.Body
 
 	dataField, ok := body["data"]
 	if !ok {
