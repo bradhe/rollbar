@@ -87,6 +87,27 @@ func init() {
 	}()
 }
 
+// -- Deploy reporting
+
+// Deploy asynchronously delivers information about deploys that happened to
+// Rollbar. Given the fact that multiple services can be managed at once, you
+// must specify a service that you're deploying (specifically).
+func Deploy(version, service string) {
+	body := map[string]interface{}{
+		"access_token": Token,
+		"environment":  Environment,
+		"revision":     version,
+		"comment":      service,
+	}
+
+	req := Request{
+		Endpoint: "https://api.rollbar.com/api/1/deploy/",
+		Body:     body,
+	}
+
+	push(req)
+}
+
 // -- Error reporting
 
 // Error asynchronously sends an error to Rollbar with the given severity
